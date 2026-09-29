@@ -1,0 +1,33 @@
+services:
+  frontend:
+    build:
+      context: .
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api}
+    ports: ["5173:80"]
+    depends_on: [backend]
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://workos:workos@db:5432/workos
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env before starting the stack}
+      REQUIRE_AUTH: ${REQUIRE_AUTH:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    ports: ["8000:8000"]
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: workos
+      POSTGRES_USER: workos
+      POSTGRES_PASSWORD: workos
+    volumes: ["workos-postgres:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workos -d workos"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+volumes:
+  workos-postgres:

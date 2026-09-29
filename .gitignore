@@ -1,0 +1,10 @@
+.env
+node_modules/
+.npm-cache/
+dist/
+backups/
+workos.db
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/

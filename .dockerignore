@@ -1,0 +1,8 @@
+node_modules
+dist
+.npm-cache
+.git
+work
+*.db
+__pycache__
+*.pyc
