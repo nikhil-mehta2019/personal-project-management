@@ -10,7 +10,7 @@ The application is containerized and can run on Render, Fly.io, Railway, or anot
 - `CORS_ORIGINS`: the exact HTTPS frontend origin, without a trailing slash.
 - Run `alembic -c alembic.ini upgrade head` as the release migration before starting application traffic.
 
-`render.yaml` contains a Docker API service and a static frontend site. Render still requires the database URL and frontend/API URLs to be entered in the dashboard because they are environment-specific secrets.
+`render.yaml` contains the Docker API service. Create the frontend separately as a Render Static Site because the current Blueprint schema rejects the static-site service type. Render still requires the database URL and frontend/API URLs to be entered in the dashboard because they are environment-specific secrets.
 
 ## Release sequence
 

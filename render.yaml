@@ -14,10 +14,3 @@ services:
         value: "true"
       - key: CORS_ORIGINS
         sync: false
-  - type: static_site
-    name: personal-work-os-web
-    buildCommand: npm ci && npm run build
-    staticPublishPath: ./dist
-    envVars:
-      - key: VITE_API_URL
-        sync: false
