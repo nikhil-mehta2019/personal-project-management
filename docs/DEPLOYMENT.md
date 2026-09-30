@@ -9,6 +9,7 @@ The application is containerized and can run on Render, Fly.io, Railway, or anot
 - `CORS_ORIGINS`: the exact HTTPS frontend origin, without a trailing slash.
 - `ALLOW_REGISTRATION`: `false` (default). See "Creating your account".
 - `ACCESS_TOKEN_TTL_MINUTES`: session length, default 720 (12 hours).
+- `CLIENT_IP_HEADER` / `TRUSTED_PROXY_HOPS`: how to find the real client IP for rate limiting. `render.yaml` sets `CLIENT_IP_HEADER=CF-Connecting-IP`. After the first deploy, check a request log line: `client_ip` must show your own public IP, not a Render or Cloudflare address. Never set either when clients connect directly; both headers can be forged by clients.
 
 `REQUIRE_AUTH` no longer exists; authentication is always required.
 

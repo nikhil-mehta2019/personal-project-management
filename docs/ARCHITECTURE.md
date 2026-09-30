@@ -47,6 +47,12 @@ Authentication is always on and fails closed: any `/api` route other than health
 
 Middleware order, outermost first: CORS → request logging → rate limit → auth. CORS must stay outermost so browser preflights never reach auth and 401/429 responses remain readable by the frontend.
 
+## History integrity
+
+Activities are the audit trail. The server alone writes the system events `Created`, `Status changed`, `Updated` (lists the edited fields), and `Moved` (old and new project code), and the API rejects client attempts to write them. Clients may add work-log entries of any other type (Comment, Investigation, Testing, ...), without old/new values.
+
+Work item numbers (`WRK-YYYY-#####`) are unique per workspace and allocated from a row-locked `work_item_counters` row, so concurrent creates are serialized rather than colliding. References to contacts and assignees must belong to the same workspace.
+
 ## Code map
 
 | Location | Responsibility |

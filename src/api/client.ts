@@ -41,7 +41,7 @@ export const api = {
   updateWorkItem: (id: string, data: Partial<ApiWorkItem>) => request<ApiWorkItem>(`/work-items/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   changeStatus: (id: string, status: string) => request<ApiWorkItem>(`/work-items/${id}/status?status=${encodeURIComponent(status)}`, { method: 'PATCH' }),
   activities: (id: string) => request<any[]>(`/work-items/${id}/activities`),
-  addActivity: (id: string, data: { activity_type: string; note: string; old_value?: string; new_value?: string }) => request<any>(`/work-items/${id}/activities`, { method: 'POST', body: JSON.stringify(data) }),
+  addActivity: (id: string, data: { activity_type: string; note: string }) => request<any>(`/work-items/${id}/activities`, { method: 'POST', body: JSON.stringify(data) }),
   communications: (id: string) => request<any[]>(`/work-items/${id}/communications`),
   addCommunication: (id: string, data: { communication_type: string; contact_id?: string; subject?: string; content: string }) => request<any>(`/work-items/${id}/communications`, { method: 'POST', body: JSON.stringify(data) }),
   contacts: () => request<any[]>('/contacts'),

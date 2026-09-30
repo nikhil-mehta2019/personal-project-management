@@ -22,10 +22,21 @@
 - [ ] Configure HTTPS/custom domain and provider access controls
 - [ ] Create your account via `manage.py`, or claim the legacy local account
 
-## Next hardening pass (P1)
+## Done in the P1 pass
 
-- [ ] Validate that contact and assignee IDs belong to the current workspace
-- [ ] Make the activity history server-written only (no client-forged "Status changed"/"Created")
-- [ ] Race-free, per-workspace work-item numbering
-- [ ] Rate limiting that uses the real client IP behind Render's proxy
+- [x] Contact and assignee references must belong to the current workspace (create, update, communications, message import)
+- [x] System history events are server-written only; edits and project moves are recorded
+- [x] Race-free, per-workspace work-item numbering (verified with concurrent creates on PostgreSQL)
+- [x] Rate limiting keyed on the real client IP when configured; bounded memory
+- [x] Message import matches senders exactly (no `%`/`_` wildcard matches)
+
+## Owner verification
+
+- [ ] After deploying, confirm `client_ip` in the request logs is your real IP
+
+## Next (P2)
+
+- [ ] Allowed values for status, type, priority, and source
+- [ ] Size limits on text fields and request bodies
+- [ ] Hide `/docs` and `/openapi.json` in production
 - [ ] Complete migration of Daily Journal, Contacts, Reports, and remaining local prototype state

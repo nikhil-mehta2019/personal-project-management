@@ -21,7 +21,11 @@ export async function importExistingLocalData(): Promise<ImportResult> {
     try {
       const created = await api.createWorkItem({ project_id: project.id, title: item.title, type: item.type || 'Task', priority: item.priority || 'Medium', status: item.status || 'New', source: item.source || 'Other', description: item.description || '', root_cause: item.rootCause, solution: item.solution, testing_notes: item.testing, current_blocker: item.blocker });
       result.workItems++;
-      for (const activity of item.activities || []) { await api.addActivity(created.id, { activity_type: activity.kind || 'Comment', note: activity.note || '' }); result.activities++; }
+      for (const activity of item.activities || []) {
+        // The server writes its own 'Created' entry and rejects client-written system events.
+        if (!activity.note || ['created', 'status changed', 'updated', 'moved'].includes(String(activity.kind || '').toLowerCase())) continue;
+        await api.addActivity(created.id, { activity_type: activity.kind || 'Comment', note: activity.note }); result.activities++;
+      }
     } catch (error) { result.failures.push(`Work item ${item.id || item.title}: ${error instanceof Error ? error.message : 'failed'}`); }
   }
   return result;

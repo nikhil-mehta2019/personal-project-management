@@ -16,3 +16,7 @@ services:
         value: "false"
       - key: ACCESS_TOKEN_TTL_MINUTES
         value: "720"
+      # Render sits behind Cloudflare, which sets this header. Check the client_ip field in the
+      # request logs after deploying; if it shows Render/Cloudflare addresses, change or clear it.
+      - key: CLIENT_IP_HEADER
+        value: CF-Connecting-IP
