@@ -1,19 +1,26 @@
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api').replace(/\/$/, '');
 
+const TOKEN_KEY = 'work-os-access-token';
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) { super(message); this.status = status; }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = sessionStorage.getItem('work-os-access-token');
+  const token = sessionStorage.getItem(TOKEN_KEY);
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(init?.headers || {}) },
   });
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
-    try { const body = await response.json(); message = body.detail || body.message || message; } catch { /* plain error */ }
+    try { const body = await response.json(); message = body.error?.message || body.detail || body.message || message; } catch { /* plain error */ }
+    // An expired or revoked session: drop the token and return to the login screen.
+    if (response.status === 401 && token && !path.startsWith('/auth/')) {
+      sessionStorage.removeItem(TOKEN_KEY);
+      window.location.reload();
+    }
     throw new ApiError(response.status, message);
   }
   return response.status === 204 ? (undefined as T) : response.json();
@@ -45,4 +52,5 @@ export const api = {
   register: (data: { name: string; email: string; password: string }) => request<any>('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
   login: (data: { email: string; password: string }) => request<any>('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
   me: () => request<any>('/auth/me'),
+  logout: () => request<void>('/auth/logout', { method: 'POST' }).finally(() => sessionStorage.removeItem(TOKEN_KEY)),
 };

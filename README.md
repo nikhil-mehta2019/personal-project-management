@@ -51,15 +51,15 @@ Set `DATABASE_URL`, then run:
 alembic upgrade head
 ```
 
-The development fallback can use SQLite, while Docker and deployment use PostgreSQL. The application retains a `create_all` bootstrap only for local development; Alembic is the production schema source of truth.
+The development fallback can use SQLite, while Docker and deployment use PostgreSQL. Alembic is the only schema owner: the API never creates tables or accounts on startup.
 
-Authentication, frontend API migration, local-data import, XLSX export, and automated workspace-isolation tests remain in the next phases.
+Authentication is always required (see `docs/ARCHITECTURE.md`). Remaining phases: full frontend API migration and XLSX export.
 
 ## Deployment checklist
 
-1. Set `DATABASE_URL` to the managed PostgreSQL connection string.
-2. Install backend dependencies and run `alembic upgrade head`.
-3. Start the API with `uvicorn backend.main:app --host 0.0.0.0 --port 8000`.
+1. Set `DATABASE_URL`, `JWT_SECRET` (32+ random characters), and `CORS_ORIGINS`.
+2. Install backend dependencies and run `alembic upgrade head` (the Docker image does this on start).
+3. Start the API with `uvicorn backend.main:app --host 0.0.0.0 --port 8000`, then create your account with `python backend/manage.py create-user`.
 4. Build the frontend with `npm run build` and deploy `dist/` as a static site.
 5. Set `VITE_API_URL` to the public API base URL.
 6. Run the local-data import utility once for any existing browser data.

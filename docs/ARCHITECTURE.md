@@ -39,7 +39,13 @@ sequenceDiagram
 
 ## Data ownership
 
-`workspaces` own projects, work items, contacts, activities, communications, tags, and journals. Every query must be constrained by the authenticated workspace. The current development build uses a bootstrapped local workspace; authentication is the remaining security gate before public deployment.
+`workspaces` own projects, work items, contacts, activities, communications, tags, and journals. Every query must be constrained by the authenticated workspace.
+
+## Authentication
+
+Authentication is always on and fails closed: any `/api` route other than health, login, and register requires a valid bearer token, and there is no anonymous or default workspace. Tokens are HS256 JWTs carrying `sub`, `workspace_id`, `ver`, `iat`, and `exp`. The API refuses to start or issue tokens without a `JWT_SECRET` of at least 32 characters. `ver` must match `users.token_version`; `POST /api/auth/logout` (or `manage.py revoke-sessions`) increments it and revokes every token for that user. Registration is closed unless `ALLOW_REGISTRATION=true`.
+
+Middleware order, outermost first: CORS → request logging → rate limit → auth. CORS must stay outermost so browser preflights never reach auth and 401/429 responses remain readable by the frontend.
 
 ## Code map
 
@@ -49,7 +55,8 @@ sequenceDiagram
 | `src/api/client.ts` | Typed HTTP client and API error normalization |
 | `src/api/localImport.ts` | One-time import from the prototype's localStorage shape |
 | `backend/main.py` | SQLAlchemy models, workspace-scoped API routes, validation, and startup bootstrap |
-| `backend/alembic/` | Database migration environment and revisions |
+| `backend/alembic/` | Database migration environment and revisions (the only schema owner) |
+| `backend/manage.py` | Account administration: create-user, claim-local, revoke-sessions |
 | `docker-compose.yml` | Local frontend, API, and PostgreSQL services |
 | `.dockerignore` | Keeps build contexts small and excludes local state |
 
@@ -63,4 +70,4 @@ sequenceDiagram
 
 ## Production security gates
 
-Before public launch, complete: password hashing and login/session tokens, authenticated workspace context, rate limiting, production CORS allowlist, secret injection, HTTPS-only deployment, Alembic-only startup migrations, automated tests for workspace isolation, and managed database backups/restore verification.
+See `SECURITY_CHECKLIST.md` for what is done and what remains before inviting anyone else.

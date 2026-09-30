@@ -11,7 +11,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://workos:workos@db:5432/workos
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env before starting the stack}
-      REQUIRE_AUTH: ${REQUIRE_AUTH:-true}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
+      ACCESS_TOKEN_TTL_MINUTES: ${ACCESS_TOKEN_TTL_MINUTES:-720}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
     ports: ["8000:8000"]
     depends_on:

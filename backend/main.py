@@ -1,5 +1,5 @@
 """Personal Work OS API with a workspace-scoped PostgreSQL schema."""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 import os
 import json
@@ -11,10 +11,9 @@ import jwt
 from pwdlib import PasswordHash
 from uuid import UUID, uuid4
 from typing import Any, Generator
-from uuid import UUID, uuid4
 from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Date, DateTime, ForeignKey, Index, String, Text, Uuid, create_engine, func, or_, select
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String, Text, Uuid, create_engine, func, or_, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///./workos.db")
@@ -25,7 +24,7 @@ class Role(str, Enum):
     owner = "Owner"; admin = "Admin"; member = "Member"; viewer = "Viewer"
 
 class User(Base):
-    __tablename__="users"; id:Mapped[UUID]=mapped_column(Uuid,primary_key=True,default=uuid4); name:Mapped[str]=mapped_column(String(120)); email:Mapped[str]=mapped_column(String(255),unique=True,index=True); password_hash:Mapped[str|None]=mapped_column(String(255),nullable=True); is_active:Mapped[bool]=mapped_column(default=True); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow); updated_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow,onupdate=datetime.utcnow)
+    __tablename__="users"; id:Mapped[UUID]=mapped_column(Uuid,primary_key=True,default=uuid4); name:Mapped[str]=mapped_column(String(120)); email:Mapped[str]=mapped_column(String(255),unique=True,index=True); password_hash:Mapped[str|None]=mapped_column(String(255),nullable=True); is_active:Mapped[bool]=mapped_column(default=True); token_version:Mapped[int]=mapped_column(Integer,default=0,server_default="0"); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow); updated_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow,onupdate=datetime.utcnow)
 class Workspace(Base):
     __tablename__="workspaces"; id:Mapped[UUID]=mapped_column(Uuid,primary_key=True,default=uuid4); name:Mapped[str]=mapped_column(String(160)); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow); updated_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow,onupdate=datetime.utcnow)
 class WorkspaceMember(Base):
@@ -81,11 +80,22 @@ class LoginIn(BaseModel):
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(message)s")
 logger = logging.getLogger("workos.api")
-app=FastAPI(title="Work OS API",version="1.0.0"); DEFAULT_WORKSPACE_ID:UUID|None=None; DEFAULT_USER_ID:UUID|None=None
-JWT_SECRET=os.getenv("JWT_SECRET", "development-only-change-me")
+app=FastAPI(title="Work OS API",version="1.0.0")
 JWT_ALGORITHM="HS256"
-REQUIRE_AUTH=os.getenv("REQUIRE_AUTH", "false").lower()=="true"
+_WEAK_SECRETS={"development-only-change-me","replace-with-a-long-random-secret"}
 password_hash=PasswordHash.recommended()
+
+def jwt_secret()->str:
+    """Authentication always fails closed: no usable secret means no tokens are issued or accepted."""
+    secret=os.getenv("JWT_SECRET","")
+    if len(secret)<32 or secret in _WEAK_SECRETS:
+        raise RuntimeError("JWT_SECRET must be a unique random value of at least 32 characters")
+    return secret
+def token_ttl_minutes()->int: return int(os.getenv("ACCESS_TOKEN_TTL_MINUTES","720"))
+def registration_allowed()->bool: return os.getenv("ALLOW_REGISTRATION","false").lower()=="true"
+def issue_token(user:"User",workspace_id:UUID)->str:
+    now=datetime.now(timezone.utc)
+    return jwt.encode({"sub":str(user.id),"workspace_id":str(workspace_id),"ver":user.token_version,"iat":now,"exp":now+timedelta(minutes=token_ttl_minutes())},jwt_secret(),algorithm=JWT_ALGORITHM)
 request_identity:ContextVar[tuple[UUID,UUID]|None]=ContextVar("request_identity", default=None)
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -93,7 +103,6 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 allowed_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if origin.strip()]
-app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"], allow_headers=["Authorization", "Content-Type", "X-Request-ID"])
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
@@ -110,35 +119,37 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         except Exception:
             logger.exception(json.dumps({"event":"unhandled_exception","request_id":request_id,"method":request.method,"path":request.url.path}))
             return JSONResponse(status_code=500, content={"error":{"code":"internal_error","message":"An unexpected error occurred.","request_id":request_id}})
-app.add_middleware(RequestLoggingMiddleware)
 
+PUBLIC_PATHS={"/api/health","/api/auth/register","/api/auth/login"}
+def _unauthorized(code:str,message:str): return JSONResponse(status_code=401, headers={"WWW-Authenticate":"Bearer"}, content={"error":{"code":code,"message":message}})
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        public = {"/api/health", "/api/auth/register", "/api/auth/login", "/docs", "/openapi.json", "/redoc"}
-        token = request.headers.get("Authorization", "")
-        if request.url.path.startswith("/api") and request.url.path not in public:
-            if not token.startswith("Bearer "):
-                if REQUIRE_AUTH: return JSONResponse(status_code=401, content={"error":{"code":"authentication_required","message":"Authentication required"}})
-            else:
-                try:
-                    payload=jwt.decode(token[7:], JWT_SECRET, algorithms=[JWT_ALGORITHM]); uid=UUID(payload["sub"]); wid=UUID(payload["workspace_id"])
-                    with Session(engine) as db:
-                        valid=db.scalar(select(WorkspaceMember).where(WorkspaceMember.user_id==uid,WorkspaceMember.workspace_id==wid))
-                        user=db.get(User,uid)
-                        if not valid or not user or not user.is_active: raise ValueError("invalid identity")
-                    request_identity.set((wid,uid))
-                except Exception:
-                    if REQUIRE_AUTH: return JSONResponse(status_code=401, content={"error":{"code":"invalid_token","message":"Invalid or expired authentication token"}})
-        response=await call_next(request)
-        request_identity.set(None)
-        return response
-app.add_middleware(AuthMiddleware)
+        path=request.url.path
+        if request.method=="OPTIONS" or not path.startswith("/api") or path in PUBLIC_PATHS:
+            return await call_next(request)
+        header=request.headers.get("Authorization","")
+        if not header.startswith("Bearer "):
+            return _unauthorized("authentication_required","Authentication required")
+        try:
+            payload=jwt.decode(header[7:], jwt_secret(), algorithms=[JWT_ALGORITHM], options={"require":["exp","iat","sub"]})
+            uid=UUID(payload["sub"]); wid=UUID(payload["workspace_id"]); ver=int(payload["ver"])
+            with Session(engine) as db:
+                member=db.scalar(select(WorkspaceMember).where(WorkspaceMember.user_id==uid,WorkspaceMember.workspace_id==wid))
+                user=db.get(User,uid)
+                if not member or not user or not user.is_active or user.token_version!=ver: raise ValueError("invalid identity")
+        except (jwt.PyJWTError, KeyError, ValueError, TypeError):
+            return _unauthorized("invalid_token","Invalid or expired authentication token")
+        reset=request_identity.set((wid,uid))
+        try:
+            return await call_next(request)
+        finally:
+            request_identity.reset(reset)
 
 _rate_lock = threading.Lock()
 _rate_windows: dict[str, tuple[int, int]] = {}
 class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        if request.url.path.startswith('/api') and request.url.path != '/api/health':
+        if request.method != 'OPTIONS' and request.url.path.startswith('/api') and request.url.path != '/api/health':
             client = request.client.host if request.client else 'unknown'
             bucket = f"{client}:{'auth' if request.url.path in ('/api/auth/login','/api/auth/register') else 'api'}"
             limit = 10 if bucket.endswith(':auth') else 120
@@ -150,52 +161,58 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if count > limit:
                 return JSONResponse(status_code=429, headers={'Retry-After':'60'}, content={'error': {'code':'rate_limited','message':'Too many requests. Please retry shortly.'}})
         return await call_next(request)
+
+# Starlette runs the LAST added middleware FIRST. Resulting order, outermost to innermost:
+# CORS -> request logging -> rate limit -> auth. CORS must be outermost so browser preflights are
+# answered before auth runs, and so 401/429 responses still carry CORS headers the frontend can read.
+app.add_middleware(AuthMiddleware)
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"], allow_headers=["Authorization", "Content-Type", "X-Request-ID"])
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     request_id = request.headers.get("X-Request-ID", str(uuid4()))
     return JSONResponse(status_code=exc.status_code, content={"error":{"code":"request_error","message":str(exc.detail),"request_id":request_id}})
-def init_database():
-    global DEFAULT_WORKSPACE_ID,DEFAULT_USER_ID
-    Base.metadata.create_all(engine)
-    with Session(engine) as db:
-        user=db.scalar(select(User).where(User.email=="local@workos.dev")) or User(name="Local User",email="local@workos.dev")
-        if user not in db: db.add(user); db.flush()
-        workspace=db.scalar(select(Workspace).where(Workspace.name=="Personal Work OS")) or Workspace(name="Personal Work OS")
-        if workspace not in db:
-            db.add(workspace); db.flush(); db.add(WorkspaceMember(workspace_id=workspace.id,user_id=user.id,role=Role.owner.value))
-        DEFAULT_USER_ID,DEFAULT_WORKSPACE_ID=user.id,workspace.id; db.commit()
 @app.on_event("startup")
-def startup(): init_database()
+def startup():
+    # Fail fast on misconfiguration. The schema is owned by Alembic (`alembic upgrade head`);
+    # the API never creates tables or seeds accounts on its own.
+    jwt_secret()
+    if os.getenv("REQUIRE_AUTH","").lower()=="false":
+        logger.warning(json.dumps({"event":"config_ignored","setting":"REQUIRE_AUTH=false","detail":"authentication is always required"}))
 def get_db()->Generator[Session,None,None]:
     with Session(engine) as db: yield db
 def context():
     identity=request_identity.get()
-    if identity: return identity
-    if not DEFAULT_WORKSPACE_ID or not DEFAULT_USER_ID: init_database()
-    return DEFAULT_WORKSPACE_ID,DEFAULT_USER_ID
+    if not identity: raise HTTPException(401,"Authentication required")
+    return identity
 def project_payload(p:Project,db:Session):
     active=db.scalar(select(func.count()).select_from(WorkItem).where(WorkItem.project_id==p.id,WorkItem.status!="Completed")) or 0; completed=db.scalar(select(func.count()).select_from(WorkItem).where(WorkItem.project_id==p.id,WorkItem.status=="Completed")) or 0
     return {"id":str(p.id),"workspace_id":str(p.workspace_id),"name":p.name,"code":p.code,"client_name":p.client_name,"description":p.description,"status":p.status,"color":p.color,"start_date":p.start_date,"notes":p.notes,"created_at":p.created_at,"updated_at":p.updated_at,"archived_at":p.archived_at,"active_work_items":active,"completed_work_items":completed}
 def item_payload(i): return {c.name:getattr(i,c.name) for c in i.__table__.columns}
 @app.get("/api/health")
 def health(): return {"status":"ok"}
+def auth_payload(user:User,workspace:Workspace):
+    return {"access_token":issue_token(user,workspace.id),"token_type":"bearer","expires_in":token_ttl_minutes()*60,"user":{"id":str(user.id),"name":user.name,"email":user.email},"workspace":{"id":str(workspace.id),"name":workspace.name}}
 @app.post("/api/auth/register",status_code=201)
 def register(data:RegisterIn,db:Session=Depends(get_db)):
+    if not registration_allowed(): raise HTTPException(403,"Registration is disabled on this instance")
     if db.scalar(select(User).where(User.email==data.email.lower())): raise HTTPException(409,"An account with this email already exists")
     user=User(name=data.name,email=data.email.lower(),password_hash=password_hash.hash(data.password)); db.add(user); db.flush()
     workspace=Workspace(name=f"{data.name}'s Work OS"); db.add(workspace); db.flush(); db.add(WorkspaceMember(workspace_id=workspace.id,user_id=user.id,role=Role.owner.value)); db.commit()
-    token=jwt.encode({"sub":str(user.id),"workspace_id":str(workspace.id)},JWT_SECRET,algorithm=JWT_ALGORITHM)
-    return {"access_token":token,"token_type":"bearer","user":{"id":str(user.id),"name":user.name,"email":user.email},"workspace":{"id":str(workspace.id),"name":workspace.name}}
+    return auth_payload(user,workspace)
 @app.post("/api/auth/login")
 def login(data:LoginIn,db:Session=Depends(get_db)):
     user=db.scalar(select(User).where(User.email==data.email.lower()))
-    if not user or not user.password_hash or not password_hash.verify(data.password,user.password_hash): raise HTTPException(401,"Invalid email or password")
-    membership=db.scalar(select(WorkspaceMember).where(WorkspaceMember.user_id==user.id))
+    if not user or not user.is_active or not user.password_hash or not password_hash.verify(data.password,user.password_hash): raise HTTPException(401,"Invalid email or password")
+    membership=db.scalar(select(WorkspaceMember).where(WorkspaceMember.user_id==user.id).order_by(WorkspaceMember.created_at))
     if not membership: raise HTTPException(403,"No workspace membership found")
-    workspace=db.get(Workspace,membership.workspace_id); token=jwt.encode({"sub":str(user.id),"workspace_id":str(membership.workspace_id)},JWT_SECRET,algorithm=JWT_ALGORITHM)
-    return {"access_token":token,"token_type":"bearer","user":{"id":str(user.id),"name":user.name,"email":user.email},"workspace":{"id":str(workspace.id),"name":workspace.name}}
+    return auth_payload(user,db.get(Workspace,membership.workspace_id))
+@app.post("/api/auth/logout",status_code=204)
+def logout(db:Session=Depends(get_db)):
+    """Revokes every token issued to the current user (all devices)."""
+    _,uid=context(); user=db.get(User,uid); user.token_version=(user.token_version or 0)+1; db.commit()
 @app.get("/api/auth/me")
 def me(db:Session=Depends(get_db)):
     wid,uid=context(); user=db.get(User,uid); workspace=db.get(Workspace,wid); return {"user":{"id":str(user.id),"name":user.name,"email":user.email},"workspace":{"id":str(workspace.id),"name":workspace.name}}

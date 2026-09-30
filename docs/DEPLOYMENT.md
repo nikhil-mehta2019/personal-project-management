@@ -5,21 +5,33 @@ The application is containerized and can run on Render, Fly.io, Railway, or anot
 ## Required production settings
 
 - `DATABASE_URL`: managed PostgreSQL URL using the `postgresql+psycopg://` SQLAlchemy scheme.
-- `JWT_SECRET`: a unique random value, never the development value.
-- `REQUIRE_AUTH=true`.
+- `JWT_SECRET`: at least 32 random characters. The API will not start without it. `render.yaml` generates one.
 - `CORS_ORIGINS`: the exact HTTPS frontend origin, without a trailing slash.
-- Run `alembic -c alembic.ini upgrade head` as the release migration before starting application traffic.
+- `ALLOW_REGISTRATION`: `false` (default). See "Creating your account".
+- `ACCESS_TOKEN_TTL_MINUTES`: session length, default 720 (12 hours).
 
-`render.yaml` contains the Docker API service. Create the frontend separately as a Render Static Site because the current Blueprint schema rejects the static-site service type. Render still requires the database URL and frontend/API URLs to be entered in the dashboard because they are environment-specific secrets.
+`REQUIRE_AUTH` no longer exists; authentication is always required.
+
+Migrations run automatically on every container start (`alembic upgrade head` in the backend Dockerfile), so no shell access is needed. They are idempotent. A database created by the old startup `create_all()` bootstrap is adopted automatically.
+
+`render.yaml` contains the Docker API service. Create the frontend separately as a Render Static Site because the current Blueprint schema rejects the static-site service type. The database URL and frontend/API URLs are environment-specific and must be entered in the dashboard.
+
+## Creating your account
+
+Pick one:
+
+1. **CLI (recommended):** from `backend/`, with `DATABASE_URL` pointing at the production database, run `python manage.py create-user --email you@example.com --name "Your Name"`.
+2. **Existing data from the no-auth era:** run `python manage.py claim-local --email you@example.com --name "Your Name"`. It converts the old password-less `local@workos.dev` account into your login so its workspace and data stay yours.
+3. **Temporary registration:** set `ALLOW_REGISTRATION=true`, register through the app, then set it back to `false` immediately.
 
 ## Release sequence
 
 1. Create the managed PostgreSQL database and copy its pooled connection URL.
 2. Create the API service from `render.yaml`; set `DATABASE_URL` and `CORS_ORIGINS`.
-3. Deploy the API and verify `/api/health` returns `{"status":"ok"}`.
-4. Run the migration command from the service shell: `alembic -c alembic.ini upgrade head`.
+3. Deploy the API (migrations apply on start) and verify `/api/health` returns `{"status":"ok"}`.
+4. Create your account (see above).
 5. Create the frontend service and set `VITE_API_URL` to the API's HTTPS `/api` base URL.
-6. Register a user, create a project, create a work item, import a message, and verify all records survive a restart.
-7. Configure the provider's daily database backup and perform a restore drill before inviting real users.
+6. Log in, create a project, create a work item, import a message, and verify all records survive a restart.
+7. Configure the provider's daily database backup and perform a restore drill before storing anything you cannot lose.
 
 No hosting provider can be provisioned from the repository alone; account ownership, billing, domain, and production secrets must be supplied by the owner.
